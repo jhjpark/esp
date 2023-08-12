@@ -947,7 +947,7 @@ static int EdgeBert_init(
 }
 
 // Matrix multiplication
-static void EdgeBert_mat_mul(
+static uint64_t EdgeBert_mat_mul(
     struct esp_device *dev,
     struct esp_device *plic_dev,
     token_t *mem,
@@ -962,6 +962,10 @@ static void EdgeBert_mat_mul(
     int write,
     struct mat *output
 ) {
+    uint64_t count1;
+    uint64_t count2;
+    count1 = get_counter();
+
     EdgeBert_init(dev, plic_dev, mem);
     int num_interrupts = 0;
     unsigned data = 0;
@@ -1037,10 +1041,13 @@ static void EdgeBert_mat_mul(
             num_interrupts
         );
     }
+
+    count2 = get_counter();
+    return count2 - count1;
 }
 
 // Softmax for attention head
-static void EdgeBert_atten_softmax(
+static uint64_t EdgeBert_atten_softmax(
     struct esp_device *dev,
     struct esp_device *plic_dev,
     token_t *mem,
@@ -1050,6 +1057,10 @@ static void EdgeBert_atten_softmax(
     token_t *span_mask,
     struct mat *output
 ) {
+    uint64_t count1;
+    uint64_t count2;
+    count1 = get_counter();
+
     EdgeBert_init(dev, plic_dev, mem);
     int num_interrupts = 0;
     unsigned data = 0;
@@ -1147,6 +1158,9 @@ static void EdgeBert_atten_softmax(
         output,
         num_interrupts
     );
+
+    count2 = get_counter();
+    return count2 - count1;
 }
 
 // Perform general matrix multiplication with possibility of softamx
@@ -1165,6 +1179,8 @@ static struct mat *general_mat_mul(
     int softmax,
     token_t *span_mask
 ) {
+    uint64_t total_edgebert_time = 0;
+
     unsigned N0_tile;
     unsigned N1_tile;
 
@@ -1226,7 +1242,7 @@ static struct mat *general_mat_mul(
             CPU_transpose_mask(right -> mask, N1_mat, M_mat);
 
             // Multiply
-            EdgeBert_mat_mul(
+            total_edgebert_time += EdgeBert_mat_mul(
                 dev,
                 plic_dev,
                 mem,
@@ -1250,7 +1266,7 @@ static struct mat *general_mat_mul(
                     }
                 }
 
-                EdgeBert_atten_softmax(
+                total_edgebert_time += EdgeBert_atten_softmax(
                     dev,
                     plic_dev,
                     mem,
@@ -1280,6 +1296,8 @@ static struct mat *general_mat_mul(
         row += N0_mat;
     }
 
+    printf("...Matmul takes %"PRIu64" clock cycles...\n", total_edgebert_time);
+
     aligned_free(val_left);
     aligned_free(mask_left);
     aligned_free(left);
@@ -1302,6 +1320,7 @@ static void general_softmax(
     struct mat *mat1,
     token_t *span_mask
 ) {
+    uint64_t total_edgebert_time = 0;
     unsigned N0_tile;
 
     // Try to get as many rows
@@ -1332,7 +1351,7 @@ static void general_softmax(
         }
 
         // Apply softmax
-        EdgeBert_atten_softmax(
+        total_edgebert_time += EdgeBert_atten_softmax(
             dev,
             plic_dev,
             mem,
@@ -1362,10 +1381,11 @@ static void general_softmax(
     aligned_free(val_input);
     aligned_free(mask_input);
     aligned_free(input);
+    printf("...SMax takes %"PRIu64" clock cycles...\n", total_edgebert_time);
 }
 
 // Apply element-wise addition (return in output)
-static void EdgeBert_element_add(
+static uint64_t EdgeBert_element_add(
     struct esp_device *dev,
     struct esp_device *plic_dev,
     token_t *mem,
@@ -1376,6 +1396,10 @@ static void EdgeBert_element_add(
     int write,
     struct mat *output
 ) {
+    uint64_t count1;
+    uint64_t count2;
+    count1 = get_counter();
+
     EdgeBert_init(dev, plic_dev, mem);
     int num_interrupts = 0;
     num_interrupts = load_matrices(
@@ -1453,10 +1477,13 @@ static void EdgeBert_element_add(
             num_interrupts
         );
     }
+
+    count2 = get_counter();
+    return count2 - count1;
 }
 
 // Apply layer norm
-static void EdgeBert_layer_norm(
+static uint64_t EdgeBert_layer_norm(
     struct esp_device *dev,
     struct esp_device *plic_dev,
     token_t *mem,
@@ -1469,6 +1496,10 @@ static void EdgeBert_layer_norm(
     int adpbias_beta,
     struct mat *output
 ) {
+    uint64_t count1;
+    uint64_t count2;
+    count1 = get_counter();
+
     EdgeBert_init(dev, plic_dev, mem);
     int num_interrupts = 0;
     unsigned data = 0;
@@ -1553,6 +1584,9 @@ static void EdgeBert_layer_norm(
         output,
         num_interrupts
     );
+
+    count2 = get_counter();
+    return count2 - count1;
 }
 
 // Performs element-wise addition with the possibility of applying layer normalizations (returns new pointer)
@@ -1570,6 +1604,7 @@ static struct mat *general_element_add(
     int base_beta,
     int adpbias_beta
 ) {
+    uint64_t total_edgebert_time = 0;
     unsigned N0_tile;
 
     // Try to get as many rows
@@ -1607,7 +1642,7 @@ static struct mat *general_element_add(
         memcpy(right -> mask, mat2 -> mask + (M_mat * row / bits_in_bytes), N0_mat * M_mat / bits_in_bytes);
 
         // Add
-        EdgeBert_element_add(
+        total_edgebert_time += EdgeBert_element_add(
             dev,
             plic_dev,
             mem,
@@ -1619,9 +1654,9 @@ static struct mat *general_element_add(
             left
         );
 
-        // Apply softmax
+        // Apply layer norm
         if (layer_norm) {
-            EdgeBert_layer_norm(
+            total_edgebert_time += EdgeBert_layer_norm(
                 dev,
                 plic_dev,
                 mem,
@@ -1652,6 +1687,8 @@ static struct mat *general_element_add(
         row += N0_mat;
     }
 
+    printf("...ElemAdd takes %"PRIu64" clock cycles...\n", total_edgebert_time);
+
     aligned_free(val_left);
     aligned_free(mask_left);
     aligned_free(left);
@@ -1674,6 +1711,7 @@ static void general_layer_norm(
     int base_beta,
     int adpbias_beta
 ) {
+    uint64_t total_edgebert_time = 0;
     unsigned N0_tile;
 
     // Try to get as many rows
@@ -1695,8 +1733,8 @@ static void general_layer_norm(
         memcpy(input -> values, mat1 -> values + M_mat * row, N0_mat * M_mat);
         memcpy(input -> mask, mat1 -> mask + (M_mat * row / bits_in_bytes), N0_mat * M_mat / bits_in_bytes);
 
-        // Add
-        EdgeBert_layer_norm(
+        // Layer norm
+        total_edgebert_time += EdgeBert_layer_norm(
             dev,
             plic_dev,
             mem,
@@ -1729,6 +1767,7 @@ static void general_layer_norm(
     aligned_free(val_input);
     aligned_free(mask_input);
     aligned_free(input);
+    printf("...LayerNorm takes %"PRIu64" clock cycles...\n", total_edgebert_time);
 }
 
 static void EdgeBert_entropy(
@@ -2172,10 +2211,8 @@ static struct mat *EdgeBert_processing(
     printf("STARTing 12 Attention Heads Processing...\n");
 
     // Profiling
-    uint64_t total_exe_cycle = 0;
     uint64_t count1;
     uint64_t count2;
-    uint64_t exe_cycle;
 
     count1 = get_counter();
     struct mat *we_mat1 = aligned_malloc(sizeof(struct mat));
@@ -2250,10 +2287,10 @@ static struct mat *EdgeBert_processing(
         0,
         0
     );
+
     count2 = get_counter();
     printf("FINISHing 12 Attention Heads Processing...\n");
     printf("###(%"PRIu64" clock cycles)###\n", count2 - count1);
-
     return output;
 }
 
@@ -2268,10 +2305,8 @@ static struct mat *EdgeBert_feed_forward(
     int hidden_size_ffn
 ) {
     printf("STARTing EdgeBERT Feed Forward Net Computation...\n");
-    uint64_t total_exe_cycle = 0;
     uint64_t count1;
     uint64_t count2;
-    uint64_t exe_cycle;
 
     count1 = get_counter();
     // Initialize weights
@@ -2516,7 +2551,7 @@ int main(int argc, char * argv[]) {
     coh_dev.addr = CSR_TILE_ADDR;
     iowrite32(&coh_dev, CSR_REG_OFFSET * 4, coherence);
     if (coherence != ACC_COH_RECALL) {
-        esp_flush(coherence, 4);
+        esp_flush(coherence);
     }
 
     printf("  #######   ######      ######       ####    #     #    #####   \n");
@@ -2528,15 +2563,15 @@ int main(int argc, char * argv[]) {
     printf("  #######   #           ######       ####    #     #    #####   \n");
 
     // Run transformer on CPU
-    CPU_transformer_layers(
-        1,
-        12,
-        128,
-        768,
-        64,
-        2,
-        3072
-    );
+    // CPU_transformer_layers(
+    //    1,
+    //    12,
+    //    128,
+    //    768,
+    //    64,
+    //    2,
+    //    3072
+    // );
 
     // Run transformer on accelerator
     EdgeBert_transformer_layers(
