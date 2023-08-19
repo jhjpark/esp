@@ -1,7 +1,7 @@
 /* Copyright (c) 2011-2021 Columbia University, System Level Design Group */
 /* SPDX-License-Identifier: Apache-2.0 */
 
-#include "edgebert_demo.h"
+#include "edgebert_real.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1180,6 +1180,12 @@ static struct mat *general_mat_mul(
     token_t *span_mask
 ) {
     uint64_t total_edgebert_time = 0;
+    uint64_t total_malloc_time = 0;
+    uint64_t total_memset_time = 0;
+    uint64_t total_transpose_time = 0;
+
+    uint64_t count1;
+    uint64_t count2;
 
     unsigned N0_tile;
     unsigned N1_tile;
@@ -1193,6 +1199,7 @@ static struct mat *general_mat_mul(
     N0_tile = (N0_tile / 16) * 16;
     N0_tile = min(N0_tile, N0);
 
+    count1 = get_counter();
     // Allocate memory for matrices
     struct mat *left = aligned_malloc(sizeof(struct mat));
     token_t *val_left = aligned_malloc(N0_tile * M_mat);
@@ -1219,27 +1226,41 @@ static struct mat *general_mat_mul(
     *output = (struct mat) {val_output, mask_output, bias_ouptut};
 
     token_t *smaller_span_mask = aligned_malloc(N0_tile * N1_tile / bits_in_bytes);
+    count2 = get_counter();
+    total_malloc_time += (count2 - count1);
 
+    count1 = get_counter();
     // Tranpose for easier access
     CPU_transpose(mat2 -> values, M_mat, N1);
     CPU_transpose_mask(mat2 -> mask, M_mat, N1);
+    count2 = get_counter();
+    total_transpose_time += (count2 - count1);
 
     int row = 0, col = 0;
     while (row < N0) {
+        count1 = get_counter();
         // Get left matrix
         unsigned N0_mat = min(N0_tile, N0 - row);
         memcpy(left -> values, mat1 -> values + M_mat * row, N0_mat * M_mat);
         memcpy(left -> mask, mat1 -> mask + (M_mat * row / bits_in_bytes), N0_mat * M_mat / bits_in_bytes);
+        count2 = get_counter();
+        total_memset_time += (count2 - count1);
 
         while (col < N1) {
+            count1 = get_counter();
             // Get right matrix
             unsigned N1_mat = min(N1_tile, N1 - col);
             memcpy(right -> values, mat2 -> values + M_mat * col, N1_mat * M_mat);
             memcpy(right -> mask, mat2 -> mask + (M_mat * col / bits_in_bytes), N1_mat * M_mat / bits_in_bytes);
+            count2 = get_counter();
+            total_memset_time += (count2 - count1);
 
+            count1 = get_counter();
             // Transpose back
             CPU_transpose(right -> values, N1_mat, M_mat);
             CPU_transpose_mask(right -> mask, N1_mat, M_mat);
+            count2 = get_counter();
+            total_transpose_time += (count2 - count1);
 
             // Multiply
             total_edgebert_time += EdgeBert_mat_mul(
@@ -1260,11 +1281,14 @@ static struct mat *general_mat_mul(
 
             // Apply softmax only if a whole row can fit
             if (softmax && N1_mat == N1) {
+                count1 = get_counter();
                 for (int i = 0; i < N0_mat; i ++) {
                     for (int j = 0; j < N1_mat / bits_in_bytes; j++) {
                         smaller_span_mask[i * N1_mat / bits_in_bytes + j] = span_mask[(i * N1) / bits_in_bytes + j];
                     }
                 }
+                count2 = get_counter();
+                total_memset_time += (count2 - count1);
 
                 total_edgebert_time += EdgeBert_atten_softmax(
                     dev,
@@ -1278,6 +1302,7 @@ static struct mat *general_mat_mul(
                 );
             }
 
+            count1 = get_counter();
             // Copy over data into output
             for (int i = 0; i < N0_mat; i++) {
                 for (int j = 0; j < N1_mat; j++) {
@@ -1291,13 +1316,14 @@ static struct mat *general_mat_mul(
                     output -> mask[(N1 * (row + i) + col) / bits_in_bytes + j] = smaller_output -> mask[N1_mat / bits_in_bytes * i + j];
                 }
             }
+            count2 = get_counter();
+            total_memset_time += (count2 - count1);
             col += N1_mat;
         }
         row += N0_mat;
     }
 
-    printf("...Matmul takes %"PRIu64" clock cycles...\n", total_edgebert_time);
-
+    count1 = get_counter();
     aligned_free(val_left);
     aligned_free(mask_left);
     aligned_free(left);
@@ -1307,6 +1333,13 @@ static struct mat *general_mat_mul(
     aligned_free(val_smaller_output);
     aligned_free(mask_smaller_output);
     aligned_free(smaller_output);
+    count2 = get_counter();
+    total_malloc_time += (count2 - count1);
+
+    printf("...Matmul EdgeBERT takes %"PRIu64" clock cycles...\n", total_edgebert_time);
+    printf("...Matmul malloc takes %"PRIu64" clock cycles...\n", total_malloc_time);
+    printf("...Matmul memset takes %"PRIu64" clock cycles...\n", total_memset_time);
+    printf("...Matmul tranpose takes %"PRIu64" clock cycles...\n", total_transpose_time);
     return output;
 }
 
@@ -1321,6 +1354,12 @@ static void general_softmax(
     token_t *span_mask
 ) {
     uint64_t total_edgebert_time = 0;
+    uint64_t total_malloc_time = 0;
+    uint64_t total_memset_time = 0;
+
+    uint64_t count1;
+    uint64_t count2;
+
     unsigned N0_tile;
 
     // Try to get as many rows
@@ -1328,6 +1367,7 @@ static void general_softmax(
     N0_tile = (N0_tile / 16) * 16;
     N0_tile = min(N0_tile, N0);
 
+    count1 = get_counter();
     // Allocate memory for matrices
     struct mat *input = aligned_malloc(sizeof(struct mat));
     token_t *val_input = aligned_malloc(N0_tile * M_mat);
@@ -1336,9 +1376,12 @@ static void general_softmax(
     *input = (struct mat) {val_input, mask_input, bias_input};
 
     token_t *smaller_span_mask = aligned_malloc(N0_tile * M_mat / bits_in_bytes);
+    count2 = get_counter();
+    total_malloc_time += (count2 - count1);
 
     int row = 0;
     while (row < N0) {
+        count1 = get_counter();
         // Get input matrix
         unsigned N0_mat = min(N0_tile, N0 - row);
         memcpy(input -> values, mat1 -> values + M_mat * row, N0_mat * M_mat);
@@ -1349,6 +1392,8 @@ static void general_softmax(
                 smaller_span_mask[i * M_mat / bits_in_bytes + j] = span_mask[(i * M_mat) / bits_in_bytes + j];
             }
         }
+        count2 = get_counter();
+        total_memset_time += (count2 - count1);
 
         // Apply softmax
         total_edgebert_time += EdgeBert_atten_softmax(
@@ -1362,6 +1407,7 @@ static void general_softmax(
             input
         );
 
+        count1 = get_counter();
         // Copy over data into output
         for (int i = 0; i < N0_mat; i++) {
             for (int j = 0; j < M_mat; j++) {
@@ -1375,13 +1421,21 @@ static void general_softmax(
                 mat1 -> mask[(M_mat * (row + i)) / bits_in_bytes + j] = input -> mask[M_mat * i + j];
             }
         }
+        count2 = get_counter();
+        total_memset_time += (count2 - count1);
         row += N0_mat;
     }
 
+    count1 = get_counter();
     aligned_free(val_input);
     aligned_free(mask_input);
     aligned_free(input);
-    printf("...SMax takes %"PRIu64" clock cycles...\n", total_edgebert_time);
+    count2 = get_counter();
+    total_malloc_time += (count2 - count1);
+
+    printf("...SMax EdgeBERT takes %"PRIu64" clock cycles...\n", total_edgebert_time);
+    printf("...SMax malloc takes %"PRIu64" clock cycles...\n", total_malloc_time);
+    printf("...SMax memset takes %"PRIu64" clock cycles...\n", total_memset_time);
 }
 
 // Apply element-wise addition (return in output)
@@ -1605,6 +1659,12 @@ static struct mat *general_element_add(
     int adpbias_beta
 ) {
     uint64_t total_edgebert_time = 0;
+    uint64_t total_malloc_time = 0;
+    uint64_t total_memset_time = 0;
+
+    uint64_t count1;
+    uint64_t count2;
+
     unsigned N0_tile;
 
     // Try to get as many rows
@@ -1612,6 +1672,7 @@ static struct mat *general_element_add(
     N0_tile = (N0_tile / 16) * 16;
     N0_tile = min(N0_tile, N0);
 
+    count1 = get_counter();
     // Allocate memory for matrices
     struct mat *left = aligned_malloc(sizeof(struct mat));
     token_t *val_left = aligned_malloc(N0_tile * M_mat);
@@ -1630,9 +1691,12 @@ static struct mat *general_element_add(
     token_t *mask_output = aligned_malloc(N0 * M_mat / bits_in_bytes);
     int bias_ouptut = 0;
     *output = (struct mat) {val_output, mask_output, bias_ouptut};
+    count2 = get_counter();
+    total_malloc_time += (count2 - count1);
 
     int row = 0;
     while (row < N0) {
+        count1 = get_counter();
         // Get left matrix
         unsigned N0_mat = min(N0_tile, N0 - row);
         memcpy(left -> values, mat1 -> values + M_mat * row, N0_mat * M_mat);
@@ -1640,6 +1704,8 @@ static struct mat *general_element_add(
 
         memcpy(right -> values, mat2 -> values + M_mat * row, N0_mat * M_mat);
         memcpy(right -> mask, mat2 -> mask + (M_mat * row / bits_in_bytes), N0_mat * M_mat / bits_in_bytes);
+        count2 = get_counter();
+        total_memset_time += (count2 - count1);
 
         // Add
         total_edgebert_time += EdgeBert_element_add(
@@ -1671,6 +1737,7 @@ static struct mat *general_element_add(
             );
         }
 
+        count1 = get_counter();
         // Copy over data into output
         for (int i = 0; i < N0_mat; i++) {
             for (int j = 0; j < M_mat; j++) {
@@ -1684,17 +1751,24 @@ static struct mat *general_element_add(
                 output -> mask[(M_mat * (row + i)) / bits_in_bytes + j] = left -> mask[M_mat * i + j];
             }
         }
+        count2 = get_counter();
+        total_memset_time += (count2 - count1);
         row += N0_mat;
     }
 
-    printf("...ElemAdd takes %"PRIu64" clock cycles...\n", total_edgebert_time);
-
+    count1 = get_counter();
     aligned_free(val_left);
     aligned_free(mask_left);
     aligned_free(left);
     aligned_free(val_right);
     aligned_free(mask_right);
     aligned_free(right);
+    count2 = get_counter();
+    total_malloc_time += (count2 - count1);
+
+    printf("...ElemAdd EdgeBERT takes %"PRIu64" clock cycles...\n", total_edgebert_time);
+    printf("...ElemAdd malloc takes %"PRIu64" clock cycles...\n", total_malloc_time);
+    printf("...ElemAdd memset takes %"PRIu64" clock cycles...\n", total_memset_time);
     return output;
 }
 
@@ -1712,6 +1786,12 @@ static void general_layer_norm(
     int adpbias_beta
 ) {
     uint64_t total_edgebert_time = 0;
+    uint64_t total_malloc_time = 0;
+    uint64_t total_memset_time = 0;
+
+    uint64_t count1;
+    uint64_t count2;
+
     unsigned N0_tile;
 
     // Try to get as many rows
@@ -1719,19 +1799,25 @@ static void general_layer_norm(
     N0_tile = (N0_tile / 16) * 16;
     N0_tile = min(N0_tile, N0);
 
+    count1 = get_counter();
     // Allocate memory for matrices
     struct mat *input = aligned_malloc(sizeof(struct mat));
     token_t *val_input = aligned_malloc(N0_tile * M_mat);
     token_t *mask_input = aligned_malloc(N0_tile * M_mat / bits_in_bytes);
     int bias_input = mat1 -> bias;
     *input = (struct mat) {val_input, mask_input, bias_input};
+    count2 = get_counter();
+    total_malloc_time += (count2 - count1);
 
     int row = 0;
     while (row < N0) {
+        count1 = get_counter();
         // Get input matrix
         unsigned N0_mat = min(N0_tile, N0 - row);
         memcpy(input -> values, mat1 -> values + M_mat * row, N0_mat * M_mat);
         memcpy(input -> mask, mat1 -> mask + (M_mat * row / bits_in_bytes), N0_mat * M_mat / bits_in_bytes);
+        count2 = get_counter();
+        total_memset_time += (count2 - count1);
 
         // Layer norm
         total_edgebert_time += EdgeBert_layer_norm(
@@ -1748,6 +1834,7 @@ static void general_layer_norm(
             input
         );
 
+        count1 = get_counter();
         // Copy over data into output
         for (int i = 0; i < N0_mat; i++) {
             for (int j = 0; j < M_mat; j++) {
@@ -1761,13 +1848,21 @@ static void general_layer_norm(
                 mat1 -> mask[(M_mat * (row + i)) / bits_in_bytes + j] = input -> mask[M_mat * i + j];
             }
         }
+        count2 = get_counter();
+        total_memset_time += (count2 - count1);
         row += N0_mat;
     }
 
+    count1 = get_counter();
     aligned_free(val_input);
     aligned_free(mask_input);
     aligned_free(input);
-    printf("...LayerNorm takes %"PRIu64" clock cycles...\n", total_edgebert_time);
+    count2 = get_counter();
+    total_malloc_time += (count2 - count1);
+
+    printf("...LayerNorm EdgeBERT takes %"PRIu64" clock cycles...\n", total_edgebert_time);
+    printf("...LayerNorm malloc takes %"PRIu64" clock cycles...\n", total_malloc_time);
+    printf("...LayerNorm memset takes %"PRIu64" clock cycles...\n", total_memset_time);
 }
 
 static void EdgeBert_entropy(
@@ -1925,8 +2020,17 @@ static struct mat *EdgeBert_attention(
     int hidden_size
 ) {
     printf("STARTing Attention Head in EdgeBert...\n");
+
+    uint64_t total_malloc_time = 0;
+    uint64_t total_memset_time = 0;
+    uint64_t total_transpose_time = 0;
+
+    uint64_t count1;
+    uint64_t count2;
+
     int num_interrupts = 0;
 
+    count1 = get_counter();
     struct mat *we_query = aligned_malloc(sizeof(struct mat));
     token_t *val_query = aligned_malloc(input_n * hidden_size);
     token_t *mask_query = aligned_malloc(input_n * hidden_size / bits_in_bytes);
@@ -1946,7 +2050,10 @@ static struct mat *EdgeBert_attention(
     *we_val = (struct mat) {val_val, mask_val, bias_val};
 
     token_t *span_mat = aligned_malloc(input_m * input_m / bits_in_bytes);
+    count2 = get_counter();
+    total_malloc_time += (count2 - count1);
 
+    count1 = get_counter();
     // Initialize weights
     memset(val_query, 35, input_n * hidden_size);
     memset(mask_query, 255, input_n * hidden_size / bits_in_bytes);
@@ -1955,6 +2062,8 @@ static struct mat *EdgeBert_attention(
     memset(val_val, -12, input_n * hidden_size);
     memset(mask_val, 255, input_n * hidden_size / bits_in_bytes);
     memset(span_mat, 255, input_m * input_m / bits_in_bytes);
+    count2 = get_counter();
+    total_memset_time += (count2 - count1);
 
     // Initialize matrix multiplication
     unsigned N0 = input_m;
@@ -2033,9 +2142,12 @@ static struct mat *EdgeBert_attention(
     aligned_free(mask_val);
     aligned_free(we_val);
 
+    count1 = get_counter();
     // Transpose output of key multiplication
     CPU_transpose(mat_key -> values, N0, N1);
     CPU_transpose_mask(mat_key -> mask, N0, N1);
+    count2 = get_counter();
+    total_transpose_time += (count2 - count1);
 
     // Matrix config
     N0 = input_m;
@@ -2122,6 +2234,7 @@ static struct mat *EdgeBert_attention(
         NULL
     );
 
+    count1 = get_counter();
     // Free memory
     aligned_free(mat_val -> values);
     aligned_free(mat_val -> mask);
@@ -2130,6 +2243,12 @@ static struct mat *EdgeBert_attention(
     aligned_free(mat_query_key -> values);
     aligned_free(mat_query_key -> mask);
     aligned_free(mat_query_key);
+    count2 = get_counter();
+    total_malloc_time += (count2 - count1);
+
+    printf("...Attention malloc takes %"PRIu64" clock cycles...\n", total_malloc_time);
+    printf("...Attention memset takes %"PRIu64" clock cycles...\n", total_memset_time);
+    printf("...Attention transpose takes %"PRIu64" clock cycles...\n", total_transpose_time);
 
     printf("FINISHing Attention Head in EdgeBert...\n");
     return output;
@@ -2210,20 +2329,32 @@ static struct mat *EdgeBert_processing(
 ) {
     printf("STARTing 12 Attention Heads Processing...\n");
 
+    uint64_t total_edgebert_time = 0;
+    uint64_t total_malloc_time = 0;
+    uint64_t total_memset_time = 0;
+
     // Profiling
     uint64_t count1;
     uint64_t count2;
+    uint64_t subcount1;
+    uint64_t subcount2;
 
     count1 = get_counter();
+    subcount1 = get_counter();
     struct mat *we_mat1 = aligned_malloc(sizeof(struct mat));
     token_t* val_mat1 = aligned_malloc(num_heads * hidden_size * input_n);
     token_t *mask_mat1 = aligned_malloc(num_heads * hidden_size * input_n / bits_in_bytes);
     int bias_mat1 = 0;
     *we_mat1 = (struct mat) {val_mat1, mask_mat1, bias_mat1};
+    subcount2 = get_counter();
+    total_malloc_time += (subcount2 - subcount1);
 
+    subcount1 = get_counter();
     // Fill with dummy data
     memset(val_mat1, 1, num_heads * hidden_size * input_n);
     memset(mask_mat1, 255, num_heads * hidden_size * input_n / bits_in_bytes);
+    subcount2 = get_counter();
+    total_memset_time += (subcount2 - subcount1);
 
     // Matrix multiplication configurations
     unsigned N0 = input_m;
@@ -2250,6 +2381,7 @@ static struct mat *EdgeBert_processing(
         NULL
     );
 
+    subcount1 = get_counter();
     // Free memory
     aligned_free(attention_heads -> values);
     aligned_free(attention_heads -> mask);
@@ -2258,16 +2390,24 @@ static struct mat *EdgeBert_processing(
     aligned_free(we_mat1 -> values);
     aligned_free(we_mat1 -> mask);
     aligned_free(we_mat1);
+    subcount2 = get_counter();
+    total_malloc_time += (subcount2 - subcount1);
 
+    subcount1 = get_counter();
     // Add on input IDs and layer norm
     struct mat *input = aligned_malloc(sizeof(struct mat));
     token_t *val_input = aligned_malloc(input_m * input_n);
     token_t *mask_input = aligned_malloc(input_m * input_n / bits_in_bytes);
     int bias_input = 0;
     *input = (struct mat) {val_input, mask_input, bias_input};
+    subcount2 = get_counter();
+    total_malloc_time += (subcount2 - subcount1);
 
+    subcount1 = get_counter();
     memset(val_input, 11, input_m * input_n);
     memset(mask_input, 255, input_m * input_n / bits_in_bytes);
+    subcount2 = get_counter();
+    total_memset_time += (subcount2 - subcount1);
 
     N0 = input_m, M_mat = input_n;
 
@@ -2291,6 +2431,8 @@ static struct mat *EdgeBert_processing(
     count2 = get_counter();
     printf("FINISHing 12 Attention Heads Processing...\n");
     printf("###(%"PRIu64" clock cycles)###\n", count2 - count1);
+    printf("...Processing malloc takes %"PRIu64" clock cycles...\n", total_malloc_time);
+    printf("...Processing memset takes %"PRIu64" clock cycles...\n", total_memset_time);
     return output;
 }
 
@@ -2305,10 +2447,17 @@ static struct mat *EdgeBert_feed_forward(
     int hidden_size_ffn
 ) {
     printf("STARTing EdgeBERT Feed Forward Net Computation...\n");
+
+    uint64_t total_malloc_time = 0;
+    uint64_t total_memset_time = 0;
+
     uint64_t count1;
     uint64_t count2;
+    uint64_t subcount1;
+    uint64_t subcount2;
 
     count1 = get_counter();
+    subcount1 = get_counter();
     // Initialize weights
     struct mat *we_mat1 = aligned_malloc(sizeof(struct mat));
     token_t *val_mat1 = aligned_malloc(input_n * hidden_size_ffn);
@@ -2321,13 +2470,18 @@ static struct mat *EdgeBert_feed_forward(
     token_t *mask_mat2 = aligned_malloc(input_n * hidden_size_ffn / bits_in_bytes);
     int bias_mat2 = 0;
     *we_mat2 = (struct mat) {val_mat2, mask_mat2, bias_mat2};
+    subcount2 = get_counter();
+    total_malloc_time += (subcount2 - subcount1);
 
+    subcount1 = get_counter();
     // Load data
     // init_buf_ffn(we_mat1, we_mat2);
     memset(val_mat1, -1, input_n * hidden_size_ffn);
     memset(val_mat2, -12, input_n * hidden_size_ffn);
     memset(mask_mat1, 255, input_n * hidden_size_ffn / bits_in_bytes);
     memset(mask_mat2, 255, input_n * hidden_size_ffn / bits_in_bytes);
+    subcount2 = get_counter();
+    total_memset_time += (subcount2 - subcount1);
 
     // Multiply attention output by weights
     unsigned N0 = input_m;
@@ -2354,9 +2508,12 @@ static struct mat *EdgeBert_feed_forward(
         NULL
     );
 
+    subcount1 = get_counter();
     aligned_free(we_mat1 -> values);
     aligned_free(we_mat1 -> mask);
     aligned_free(we_mat1);
+    subcount2 = get_counter();
+    total_malloc_time += (subcount2 - subcount1);
 
     // Multiply with second weights
     N0 = input_m;
@@ -2399,6 +2556,7 @@ static struct mat *EdgeBert_feed_forward(
         0
     );
 
+    subcount1 = get_counter();
     // Free memory
     aligned_free(attention_head_out -> values);
     aligned_free(attention_head_out -> mask);
@@ -2407,10 +2565,14 @@ static struct mat *EdgeBert_feed_forward(
     aligned_free(we_mat2 -> values);
     aligned_free(we_mat2 -> mask);
     aligned_free(we_mat2);
+    subcount2 = get_counter();
+    total_malloc_time += (subcount2 - subcount1);
 
     count2 = get_counter();
     printf("FINISHing EdgeBERT Feed Forward Net Computation...\n");
     printf("###(taking %"PRIu64" clock cycles)###...\n", count2 - count1);
+    printf("...FFN malloc takes %"PRIu64" clock cycles...\n", total_malloc_time);
+    printf("...FFN memset takes %"PRIu64" clock cycles...\n", total_memset_time);
     return output;
 }
 
@@ -2515,6 +2677,39 @@ static void EdgeBert_transformer_layers(
     printf("Thank you!\n");
 }
 
+static void baremetal_matmul() {
+    // Matrix multiplication configurations
+    int N0 = 32;
+    int N1 = 32;
+    int M_mat = 32;
+
+    int *mat1 = aligned_malloc(N0 * M_mat * sizeof(int));
+    int *mat2 = aligned_malloc(M_mat * N1 * sizeof(int));
+    int *output = aligned_malloc(N0 * N1 * sizeof(int));
+
+    // Fill with data
+    for (int i = 0; i < N0 * M_mat; i++) {
+        mat1[i] = 1;
+    }
+
+    for (int i = 0; i < M_mat * N1; i++) {
+        mat2[i] = 1;
+    }
+
+    uint64_t count1;
+    uint64_t count2;
+
+    count1 = get_counter();
+    // Query multiplication
+    CPU_multiply(mat1, mat2, N0, M_mat, N1, output);
+    count2 = get_counter();
+    printf("...CPU Matmul takes %"PRIu64" clock cycles...\n", count2 - count1);
+
+    aligned_free(mat1);
+    aligned_free(mat2);
+    aligned_free(output);
+}
+
 // Driver
 // Edgebert compuatation
 int main(int argc, char * argv[]) {
@@ -2586,6 +2781,8 @@ int main(int argc, char * argv[]) {
         2,
         3072
     );
+
+    baremetal_matmul();
 
     printf("FINISHing DRIVER\n");
     aligned_free(mem);
