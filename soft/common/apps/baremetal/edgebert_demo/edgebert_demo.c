@@ -1182,7 +1182,6 @@ static struct mat *general_mat_mul(
     uint64_t total_edgebert_time = 0;
     uint64_t total_malloc_time = 0;
     uint64_t total_memset_time = 0;
-    uint64_t total_transpose_time = 0;
 
     uint64_t count1;
     uint64_t count2;
@@ -1229,13 +1228,6 @@ static struct mat *general_mat_mul(
     count2 = get_counter();
     total_malloc_time += (count2 - count1);
 
-    count1 = get_counter();
-    // Transpose for easier access
-    CPU_transpose(mat2 -> values, M_mat, N1);
-    CPU_transpose_mask(mat2 -> mask, M_mat, N1);
-    count2 = get_counter();
-    total_transpose_time += (count2 - count1);
-
     int row = 0, col = 0;
     while (row < N0) {
         count1 = get_counter();
@@ -1250,17 +1242,18 @@ static struct mat *general_mat_mul(
             count1 = get_counter();
             // Get right matrix
             unsigned N1_mat = min(N1_tile, N1 - col);
-            memcpy(right -> values, mat2 -> values + M_mat * col, N1_mat * M_mat);
-            memcpy(right -> mask, mat2 -> mask + (M_mat * col / bits_in_bytes), N1_mat * M_mat / bits_in_bytes);
+            for (int i = 0; i < M_mat; i++) {
+                for (int j = 0; j < N1_mat; j++) {
+                    right -> values[N1_mat * i + j] = mat2 -> values[N1 * i + col + j];
+                }
+            }
+            for (int i = 0; i < M_mat; i++) {
+                for (int j = 0; j < N1_mat / bits_in_bytes; j++) {
+                    right -> mask[N1_mat / bits_in_bytes * i + j] = mat2 -> mask[(N1 * i + col) / bits_in_bytes + j];
+                }
+            }
             count2 = get_counter();
             total_memset_time += (count2 - count1);
-
-            count1 = get_counter();
-            // Transpose back
-            CPU_transpose(right -> values, N1_mat, M_mat);
-            CPU_transpose_mask(right -> mask, N1_mat, M_mat);
-            count2 = get_counter();
-            total_transpose_time += (count2 - count1);
 
             // Multiply
             total_edgebert_time += EdgeBert_mat_mul(
@@ -1282,7 +1275,7 @@ static struct mat *general_mat_mul(
             // Apply softmax only if a whole row can fit
             if (softmax && N1_mat == N1) {
                 count1 = get_counter();
-                for (int i = 0; i < N0_mat; i ++) {
+                for (int i = 0; i < N0_mat; i++) {
                     for (int j = 0; j < N1_mat / bits_in_bytes; j++) {
                         smaller_span_mask[i * N1_mat / bits_in_bytes + j] = span_mask[(i * N1) / bits_in_bytes + j];
                     }
@@ -1339,7 +1332,6 @@ static struct mat *general_mat_mul(
     printf("...Matmul EdgeBERT takes %"PRIu64" clock cycles...\n", total_edgebert_time);
     printf("...Matmul malloc takes %"PRIu64" clock cycles...\n", total_malloc_time);
     printf("...Matmul memset takes %"PRIu64" clock cycles...\n", total_memset_time);
-    printf("...Matmul transpose takes %"PRIu64" clock cycles...\n", total_transpose_time);
     return output;
 }
 
@@ -1387,7 +1379,7 @@ static void general_softmax(
         memcpy(input -> values, mat1 -> values + M_mat * row, N0_mat * M_mat);
         memcpy(input -> mask, mat1 -> mask + (M_mat * row / bits_in_bytes), N0_mat * M_mat / bits_in_bytes);
 
-        for (int i = 0; i < N0_mat; i ++) {
+        for (int i = 0; i < N0_mat; i++) {
             for (int j = 0; j < M_mat / bits_in_bytes; j++) {
                 smaller_span_mask[i * M_mat / bits_in_bytes + j] = span_mask[(i * M_mat) / bits_in_bytes + j];
             }
