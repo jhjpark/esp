@@ -1230,7 +1230,7 @@ static struct mat *general_mat_mul(
     total_malloc_time += (count2 - count1);
 
     count1 = get_counter();
-    // Tranpose for easier access
+    // Transpose for easier access
     CPU_transpose(mat2 -> values, M_mat, N1);
     CPU_transpose_mask(mat2 -> mask, M_mat, N1);
     count2 = get_counter();
@@ -1339,7 +1339,7 @@ static struct mat *general_mat_mul(
     printf("...Matmul EdgeBERT takes %"PRIu64" clock cycles...\n", total_edgebert_time);
     printf("...Matmul malloc takes %"PRIu64" clock cycles...\n", total_malloc_time);
     printf("...Matmul memset takes %"PRIu64" clock cycles...\n", total_memset_time);
-    printf("...Matmul tranpose takes %"PRIu64" clock cycles...\n", total_transpose_time);
+    printf("...Matmul transpose takes %"PRIu64" clock cycles...\n", total_transpose_time);
     return output;
 }
 
@@ -2125,6 +2125,7 @@ static struct mat *EdgeBert_attention(
         NULL
     );
 
+    count1 = get_counter();
     // Free inputs and weights
     aligned_free(input -> values);
     aligned_free(input -> mask);
@@ -2141,6 +2142,8 @@ static struct mat *EdgeBert_attention(
     aligned_free(val_val);
     aligned_free(mask_val);
     aligned_free(we_val);
+    count2 = get_counter();
+    total_malloc_time += (count2 - count1);
 
     count1 = get_counter();
     // Transpose output of key multiplication
@@ -2203,6 +2206,7 @@ static struct mat *EdgeBert_attention(
         );
     }
 
+    count1 = get_counter();
     // Free memory
     aligned_free(mat_query -> values);
     aligned_free(mat_query -> mask);
@@ -2211,6 +2215,8 @@ static struct mat *EdgeBert_attention(
     aligned_free(mat_key -> mask);
     aligned_free(mat_key);
     aligned_free(span_mat);
+    count2 = get_counter();
+    total_malloc_time += (count2 - count1);
 
     // Multiply query and key with value matrix
     N0 = input_m;
