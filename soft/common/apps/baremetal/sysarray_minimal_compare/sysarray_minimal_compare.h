@@ -1,8 +1,8 @@
 /* Copyright (c) 2011-2021 Columbia University, System Level Design Group */
 /* SPDX-License-Identifier: Apache-2.0 */
 
-#ifndef __SYSARRAY_MINIMAL_H__
-#define __SYSARRAY_MINIMAL_H__
+#ifndef __SYSARRAY_MINIMAL_COMPARE_H__
+#define __SYSARRAY_MINIMAL_COMPARE_H__
 
 #define ACC_BASE_ADDR 0x60400000
 #define ACC_OFFSET 0x100000
@@ -18,4 +18,4 @@
 #define CSR_TILE_ADDR (CSR_BASE_ADDR + CSR_TILE_OFFSET * TILE_ID)
 
 
-#endif /* __SYSARRAY_MINIMAL_H__ */
+#endif /* __SYSARRAY_MINIMAL_COMPARE_H__ */

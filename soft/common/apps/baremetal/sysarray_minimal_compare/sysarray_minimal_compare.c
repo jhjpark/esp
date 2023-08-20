@@ -9,7 +9,7 @@
 
 #include <esp_accelerator.h>
 #include <esp_probe.h>
-#include "sysarray_minimal.h"
+#include "sysarray_minimal_compare.h"
 
 #define MAX_PRINTED_ERRORS 10
 #define HU_SYSARRAY  0x102
