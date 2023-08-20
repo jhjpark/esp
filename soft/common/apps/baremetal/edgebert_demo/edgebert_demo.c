@@ -1,7 +1,7 @@
 /* Copyright (c) 2011-2021 Columbia University, System Level Design Group */
 /* SPDX-License-Identifier: Apache-2.0 */
 
-#include "edgebert_real.h"
+#include "edgebert_demo.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -2677,39 +2677,6 @@ static void EdgeBert_transformer_layers(
     printf("Thank you!\n");
 }
 
-static void baremetal_matmul() {
-    // Matrix multiplication configurations
-    int N0 = 32;
-    int N1 = 32;
-    int M_mat = 32;
-
-    int *mat1 = aligned_malloc(N0 * M_mat * sizeof(int));
-    int *mat2 = aligned_malloc(M_mat * N1 * sizeof(int));
-    int *output = aligned_malloc(N0 * N1 * sizeof(int));
-
-    // Fill with data
-    for (int i = 0; i < N0 * M_mat; i++) {
-        mat1[i] = 1;
-    }
-
-    for (int i = 0; i < M_mat * N1; i++) {
-        mat2[i] = 1;
-    }
-
-    uint64_t count1;
-    uint64_t count2;
-
-    count1 = get_counter();
-    // Query multiplication
-    CPU_multiply(mat1, mat2, N0, M_mat, N1, output);
-    count2 = get_counter();
-    printf("...CPU Matmul takes %"PRIu64" clock cycles...\n", count2 - count1);
-
-    aligned_free(mat1);
-    aligned_free(mat2);
-    aligned_free(output);
-}
-
 // Driver
 // Edgebert compuatation
 int main(int argc, char * argv[]) {
@@ -2781,8 +2748,6 @@ int main(int argc, char * argv[]) {
         2,
         3072
     );
-
-    baremetal_matmul();
 
     printf("FINISHing DRIVER\n");
     aligned_free(mem);
