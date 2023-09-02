@@ -2665,22 +2665,22 @@ int main(int argc, char * argv[]) {
     // );
 
     // Run transformer on accelerator
-    // EdgeBert_transformer_layers(
-    //     &dev,
-    //     &plic_dev,
-    //     1,
-    //     12,
-    //     128,
-    //     768,
-    //     64,
-    //     2,
-    //     3072
-    // );
-
-    debug_matmul(
+    EdgeBert_transformer_layers(
         &dev,
-        &plic_dev
+        &plic_dev,
+        1,
+        12,
+        128,
+        768,
+        64,
+        2,
+        3072
     );
+
+    // debug_matmul(
+    //     &dev,
+    //     &plic_dev
+    // );
 
     printf("FINISHing DRIVER\n");
     return 0;
