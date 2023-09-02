@@ -824,7 +824,6 @@ static int master_aux_write(
 static int load_matrix(
     struct esp_device *dev,
     struct esp_device *plic_dev,
-    int N0,
     int M_mat,
     struct mat *mat,
     int decoder,
@@ -843,10 +842,7 @@ static int load_matrix(
 static int load_matrices(
     struct esp_device *dev,
     struct esp_device *plic_dev,
-    int mat1_N0,
-    int mat1_M_mat,
-    int mat2_N0,
-    int mat2_M_mat,
+    int M_mat,
     struct mat *mat1,
     struct mat *mat2,
     int num_interrupts
@@ -855,8 +851,7 @@ static int load_matrices(
     num_interrupts = load_matrix(
         dev,
         plic_dev,
-        mat1_N0,
-        mat1_M_mat,
+        M_mat,
         mat1,
         0,
         num_interrupts
@@ -866,8 +861,7 @@ static int load_matrices(
     num_interrupts = load_matrix(
         dev,
         plic_dev,
-        mat2_N0,
-        mat2_M_mat,
+        M_mat,
         mat2,
         1,
         num_interrupts
@@ -934,10 +928,7 @@ static uint64_t EdgeBert_mat_mul(
     num_interrupts = load_matrices(
         dev,
         plic_dev,
-        N0,
         M_mat,
-        M_mat,
-        N1,
         mat1,
         mat2,
         num_interrupts
@@ -1027,7 +1018,6 @@ static uint64_t EdgeBert_atten_softmax(
         load_matrix(
             dev,
             plic_dev,
-            N0,
             M_mat,
             input,
             0,
@@ -1138,17 +1128,8 @@ static struct mat *general_mat_mul(
     uint64_t count1;
     uint64_t count2;
 
-    unsigned N0_tile;
-    unsigned N1_tile;
-
-    // Try to get as many columns
-    N1_tile = mask_buffer_size * bits_in_bytes / M_mat;
-    N1_tile = (N1_tile / 16) * 16;
-    N1_tile = min(N1_tile, N1);
-
-    N0_tile = mask_buffer_size * bits_in_bytes / (M_mat + N1_tile);
-    N0_tile = (N0_tile / 16) * 16;
-    N0_tile = min(N0_tile, N0);
+    unsigned N0_tile = vector_size;
+    unsigned N1_tile = vector_size;
 
     count1 = get_counter();
     // Allocate memory for matrices
@@ -1301,12 +1282,7 @@ static void general_softmax(
     uint64_t count1;
     uint64_t count2;
 
-    unsigned N0_tile;
-
-    // Try to get as many rows
-    N0_tile = mask_buffer_size * bits_in_bytes / (2 * N0);
-    N0_tile = (N0_tile / 16) * 16;
-    N0_tile = min(N0_tile, N0);
+    unsigned N0_tile = vector_size;
 
     count1 = get_counter();
     // Allocate memory for matrices
@@ -1398,9 +1374,6 @@ static uint64_t EdgeBert_element_add(
     num_interrupts = load_matrices(
         dev,
         plic_dev,
-        N0,
-        M_mat,
-        N0,
         M_mat,
         mat1,
         mat2,
@@ -1498,7 +1471,6 @@ static uint64_t EdgeBert_layer_norm(
         load_matrix(
             dev,
             plic_dev,
-            N0,
             M_mat,
             mat1,
             0,
@@ -1598,12 +1570,7 @@ static struct mat *general_element_add(
     uint64_t count1;
     uint64_t count2;
 
-    unsigned N0_tile;
-
-    // Try to get as many rows
-    N0_tile = mask_buffer_size * bits_in_bytes / (2 * N0);
-    N0_tile = (N0_tile / 16) * 16;
-    N0_tile = min(N0_tile, N0);
+    unsigned N0_tile = vector_size;
 
     count1 = get_counter();
     // Allocate memory for matrices
@@ -1722,12 +1689,7 @@ static void general_layer_norm(
     uint64_t count1;
     uint64_t count2;
 
-    unsigned N0_tile;
-
-    // Try to get as many rows
-    N0_tile = mask_buffer_size * bits_in_bytes / (2 * N0);
-    N0_tile = (N0_tile / 16) * 16;
-    N0_tile = min(N0_tile, N0);
+    unsigned N0_tile = vector_size;
 
     count1 = get_counter();
     // Allocate memory for matrices
@@ -2703,22 +2665,22 @@ int main(int argc, char * argv[]) {
     // );
 
     // Run transformer on accelerator
-    EdgeBert_transformer_layers(
-        &dev,
-        &plic_dev,
-        1,
-        12,
-        128,
-        768,
-        64,
-        2,
-        3072
-    );
-
-    // debug_matmul(
+    // EdgeBert_transformer_layers(
     //     &dev,
-    //     &plic_dev
+    //     &plic_dev,
+    //     1,
+    //     12,
+    //     128,
+    //     768,
+    //     64,
+    //     2,
+    //     3072
     // );
+
+    debug_matmul(
+        &dev,
+        &plic_dev
+    );
 
     printf("FINISHing DRIVER\n");
     return 0;
